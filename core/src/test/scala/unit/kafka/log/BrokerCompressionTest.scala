@@ -17,39 +17,37 @@
 
 package kafka.log
 
-import kafka.utils._
 import kafka.message._
-import org.junit._
-import org.junit.Assert._
-import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
-import org.junit.runners.Parameterized.Parameters
+import kafka.server.{BrokerTopicStats, FetchLogEnd, LogDirFailureChannel}
+import kafka.utils._
 import org.apache.kafka.common.record.{CompressionType, MemoryRecords, RecordBatch, SimpleRecord}
 import org.apache.kafka.common.utils.Utils
-import java.util.{Collection, Properties}
+import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api._
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.{Arguments, MethodSource}
 
-import kafka.server.{BrokerTopicStats, LogDirFailureChannel}
+import java.util.Properties
+import scala.jdk.CollectionConverters._
 
-import scala.collection.JavaConverters._
-
-@RunWith(value = classOf[Parameterized])
-class BrokerCompressionTest(messageCompression: String, brokerCompression: String) {
+class BrokerCompressionTest {
 
   val tmpDir = TestUtils.tempDir()
   val logDir = TestUtils.randomPartitionLogDir(tmpDir)
   val time = new MockTime(0, 0)
   val logConfig = LogConfig()
 
-  @After
-  def tearDown() {
+  @AfterEach
+  def tearDown(): Unit = {
     Utils.delete(tmpDir)
   }
 
   /**
    * Test broker-side compression configuration
    */
-  @Test
-  def testBrokerSideCompression() {
+  @ParameterizedTest
+  @MethodSource(Array("parameters"))
+  def testBrokerSideCompression(messageCompression: String, brokerCompression: String): Unit = {
     val messageCompressionCode = CompressionCodec.getCompressionCodec(messageCompression)
     val logProps = new Properties()
     logProps.put(LogConfig.CompressionTypeProp, brokerCompression)
@@ -64,26 +62,27 @@ class BrokerCompressionTest(messageCompression: String, brokerCompression: Strin
           new SimpleRecord("hello".getBytes), new SimpleRecord("there".getBytes)), leaderEpoch = 0)
 
     def readBatch(offset: Int): RecordBatch = {
-      val fetchInfo = log.read(offset, 4096, maxOffset = None,
-        includeAbortedTxns = false, minOneMessage = true)
+      val fetchInfo = log.read(offset,
+        maxLength = 4096,
+        isolation = FetchLogEnd,
+        minOneMessage = true)
       fetchInfo.records.batches.iterator.next()
     }
 
     if (!brokerCompression.equals("producer")) {
       val brokerCompressionCode = BrokerCompressionCodec.getCompressionCodec(brokerCompression)
-      assertEquals("Compression at offset 0 should produce " + brokerCompressionCode.name, brokerCompressionCode.codec, readBatch(0).compressionType.id)
+      assertEquals(brokerCompressionCode.codec, readBatch(0).compressionType.id, "Compression at offset 0 should produce " + brokerCompressionCode.name)
     }
     else
-      assertEquals("Compression at offset 0 should produce " + messageCompressionCode.name, messageCompressionCode.codec, readBatch(0).compressionType.id)
+      assertEquals(messageCompressionCode.codec, readBatch(0).compressionType.id, "Compression at offset 0 should produce " + messageCompressionCode.name)
   }
 
 }
 
 object BrokerCompressionTest {
-  @Parameters
-  def parameters: Collection[Array[String]] = {
+  def parameters: java.util.stream.Stream[Arguments] = {
     (for (brokerCompression <- BrokerCompressionCodec.brokerCompressionOptions;
          messageCompression <- CompressionType.values
-    ) yield Array(messageCompression.name, brokerCompression)).asJava
+    ) yield Arguments.of(messageCompression.name, brokerCompression)).asJava.stream()
   }
 }
